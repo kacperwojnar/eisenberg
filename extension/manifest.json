@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "eisenberg",
+  "version": "0.1.0",
+  "permissions": ["sidePanel", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "eisenberg"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html"
+}

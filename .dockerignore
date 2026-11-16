@@ -1,0 +1,9 @@
+**/.git
+**/bin
+**/obj
+**/.next
+**/node_modules
+web
+extension
+docs
+.env

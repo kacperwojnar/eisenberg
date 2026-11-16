@@ -1,0 +1,84 @@
+# Draft. Two microservices (api, worker), the website container, and local stand-ins for Postgres and RabbitMQ.
+name: eisenberg
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: eisenberg
+      POSTGRES_PASSWORD: eisenberg
+      POSTGRES_DB: eisenberg
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eisenberg -d eisenberg"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: eisenberg
+      RABBITMQ_DEFAULT_PASS: eisenberg
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://eisenberg:eisenberg@postgres:5432/eisenberg
+      RABBITMQ_URL: amqp://eisenberg:eisenberg@rabbitmq:5672
+      FILE_STORAGE_ROOT: /data/files
+      DEVELOPMENT_AUTH: "true"
+      FOUNDRY_CHAT_DEPLOYMENT: claude-haiku-5-5
+    env_file:
+      - path: ../.env
+        required: false
+    ports:
+      - "5000:5000"
+    volumes:
+      - eisenberg-files:/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://eisenberg:eisenberg@postgres:5432/eisenberg
+      RABBITMQ_URL: amqp://eisenberg:eisenberg@rabbitmq:5672
+      FILE_STORAGE_ROOT: /data/files
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      - eisenberg-files:/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  eisenberg-files:

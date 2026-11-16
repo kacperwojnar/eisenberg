@@ -424,5 +424,15 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
+# Local draft data and secrets
+.env
+data/bin/
+data/obj/
+data/files/
+
+# Next.js
+web/.next/
+*.tsbuildinfo
+
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
