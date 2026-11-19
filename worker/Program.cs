@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
-EnvFile.Load(Path.Combine(Directory.GetCurrentDirectory(), "..", ".env"));
-
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
 var databaseUrl = builder.Configuration["DATABASE_URL"]

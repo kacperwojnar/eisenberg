@@ -6,7 +6,8 @@
     <style>
       body { font-family: Georgia, serif; margin: 0; }
       main { display: flex; flex-direction: column; height: 100vh; }
-      #log { flex: 1; overflow: auto; padding: 0.75rem; }
+      #log, #model { flex: 1; overflow: auto; padding: 0.75rem; }
+      #model { white-space: pre-wrap; font-family: Consolas, monospace; font-size: 0.8rem; }
       form { display: flex; gap: 0.4rem; padding: 0.75rem; border-top: 1px solid #ddd; }
       textarea { flex: 1; font: inherit; }
       .note { color: #555; font-size: 0.85rem; padding: 0 0.75rem; }
@@ -14,15 +15,12 @@
   </head>
   <body>
     <main>
-      <p class="note">A chat is the current assumption. It may be replaced.</p>
+      <p class="note"><button id="read-form" type="button">Read form</button></p>
+      <pre id="model"></pre>
       <div id="log"></div>
       <form id="chat">
         <textarea id="message" rows="3" placeholder="Message"></textarea>
         <button type="submit">Send</button>
-      </form>
-      <form id="mismatch">
-        <textarea id="report" rows="3" placeholder="What does not match the settings"></textarea>
-        <button type="submit">Report to admin</button>
       </form>
     </main>
     <script src="sidepanel.js"></script>

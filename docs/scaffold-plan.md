@@ -31,7 +31,7 @@ Extension: plain Manifest V3, no extension framework. Chrome and Edge. A side pa
 - RabbitMQ with the management UI.
 - PostgreSQL, for the API, until a Neon connection string is set.
 
-Neon remains the chosen hosted database. The container is a stand-in. Document the switch in `.env.example`: `DATABASE_URL` points at the local container by default, and the comment says to replace it with the Neon URL.
+Neon remains the chosen hosted database. The container is a stand-in. Local `dotnet run` reads `appsettings.Development.json`. Compose sets `DATABASE_URL` and `RABBITMQ_URL` for the containers. Do not load a `.env` file from C#.
 
 Do not add Qdrant, Blob, Foundry, or Entra containers. Those are configured by URL and key later.
 
@@ -39,7 +39,7 @@ RabbitMQ queue name: `file-uploaded`. One message means a file was stored and th
 
 ## Configuration
 
-`.env.example` at the repository root. The API and the worker read the same names. Empty values mean "not connected". The process still starts.
+`.env.example` at the repository root lists the variable names. Compose may load `.env`. The API and the worker read configuration through the ASP.NET host: `appsettings.json`, `appsettings.Development.json`, then environment variables. Empty secret values mean "not connected". The process still starts.
 
 | Variable | Used by | When empty |
 |---|---|---|

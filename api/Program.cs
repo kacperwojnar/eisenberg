@@ -3,8 +3,6 @@ using Eisenberg.Data;
 using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
 
-EnvFile.Load(Path.Combine(Directory.GetCurrentDirectory(), "..", ".env"));
-
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
 

@@ -37,7 +37,7 @@ The website is where the user imports and deletes files. Those files are kept in
 - It is not a second version of the user website.
 - The interaction that fills a form lives only here, for now. A chat is the current assumption. Another way of choosing may replace it. That choice is still open.
 - Filling a form uses the documents stored in Blob. If the interface stays a chat, grounding on those documents is Foundry's job. The extension does not send file ids.
-- The extension does not open the page where the form is filled. The user has no access to that page for now.
+- When the extension is opened on a page, it reads the form fields already there (text boxes, dropdowns, checkboxes, radio buttons) and shows that model as JSON. It does not write into the page.
 - The filled values stay on the target website and are stored in that website's database. This application only shows information about what was filled.
 
 It was not stated whether a user sees every file in an organization they belong to, or only the files they uploaded.
