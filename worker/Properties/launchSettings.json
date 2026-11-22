@@ -2,6 +2,7 @@
   "profiles": {
     "eisenberg-worker": {
       "commandName": "Project",
+      "applicationUrl": "http://127.0.0.1:5055",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }

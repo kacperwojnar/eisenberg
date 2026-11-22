@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 
 namespace Eisenberg.Data;
@@ -11,6 +12,12 @@ public sealed class EisenbergDb(DbContextOptions<EisenbergDb> options) : DbConte
     public DbSet<FilledFormInfo> FilledForms => Set<FilledFormInfo>();
     public DbSet<SettingsMismatch> SettingsMismatches => Set<SettingsMismatch>();
     public DbSet<GlobalContentUnderstanding> GlobalContentUnderstanding => Set<GlobalContentUnderstanding>();
+    public DbSet<FormDefinition> Forms => Set<FormDefinition>();
+    public DbSet<InterpretationRun> InterpretationRuns => Set<InterpretationRun>();
+    public DbSet<FormModelVersion> ModelVersions => Set<FormModelVersion>();
+    public DbSet<ChoiceList> ChoiceLists => Set<ChoiceList>();
+    public DbSet<FormPublication> FormPublications => Set<FormPublication>();
+    public DbSet<RunArtifact> RunArtifacts => Set<RunArtifact>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -27,6 +34,42 @@ public sealed class EisenbergDb(DbContextOptions<EisenbergDb> options) : DbConte
             .HasOne(f => f.Organization)
             .WithMany()
             .HasForeignKey(f => f.OrganizationId);
+
+        modelBuilder.Entity<InterpretationRun>()
+            .HasOne(r => r.Form)
+            .WithMany(f => f.Runs)
+            .HasForeignKey(r => r.FormId);
+        modelBuilder.Entity<InterpretationRun>().Property(r => r.ReportJson).HasColumnType("jsonb");
+        modelBuilder.Entity<FormModelVersion>().Property(m => m.ModelJson).HasColumnType("jsonb");
+        modelBuilder.Entity<FormModelVersion>().HasIndex(m => new { m.FormId, m.Number }).IsUnique();
+        modelBuilder.Entity<FormModelVersion>().HasOne<FormDefinition>().WithMany().HasForeignKey(m => m.FormId);
+        modelBuilder.Entity<FormModelVersion>().HasOne<InterpretationRun>().WithMany().HasForeignKey(m => m.RunId);
+        modelBuilder.Entity<ChoiceList>().Property(c => c.DependsOnJson).HasColumnType("jsonb");
+        modelBuilder.Entity<ChoiceList>().Property(c => c.ChoicesJson).HasColumnType("jsonb");
+        modelBuilder.Entity<ChoiceList>().HasOne<FormModelVersion>().WithMany().HasForeignKey(c => c.ModelId);
+        modelBuilder.Entity<FormPublication>().HasKey(p => new { p.FormId, p.OrganizationId });
+        modelBuilder.Entity<FormPublication>()
+            .HasOne<FormDefinition>()
+            .WithMany(f => f.Publications)
+            .HasForeignKey(p => p.FormId);
+        modelBuilder.Entity<FormPublication>().HasOne<Organization>().WithMany().HasForeignKey(p => p.OrganizationId);
+        modelBuilder.Entity<RunArtifact>().HasIndex(a => new { a.RunId, a.Sequence });
+        modelBuilder.Entity<RunArtifact>().HasOne<InterpretationRun>().WithMany().HasForeignKey(a => a.RunId);
+    }
+}
+
+public static class Schema
+{
+    public static async Task EnsureAsync(EisenbergDb db, CancellationToken cancellationToken = default)
+    {
+        if (await db.Database.EnsureCreatedAsync(cancellationToken))
+            return;
+
+        // EnsureCreated does nothing when the database exists, so tables added later are created here.
+        var script = db.Database.GenerateCreateScript();
+        script = Regex.Replace(script, @"\bCREATE TABLE\b", "CREATE TABLE IF NOT EXISTS");
+        script = Regex.Replace(script, @"\bCREATE (UNIQUE )?INDEX\b", "CREATE ${1}INDEX IF NOT EXISTS");
+        await db.Database.ExecuteSqlRawAsync(script, cancellationToken);
     }
 }
 

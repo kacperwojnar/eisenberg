@@ -429,6 +429,7 @@ FodyWeavers.xsd
 data/bin/
 data/obj/
 data/files/
+data/skyvern/
 
 # Next.js
 web/.next/

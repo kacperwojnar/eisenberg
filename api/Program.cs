@@ -11,7 +11,7 @@ var databaseUrl = builder.Configuration["DATABASE_URL"]
 builder.Services.AddDbContext<EisenbergDb>(options =>
     options.UseNpgsql(ConnectionStrings.ToNpgsql(databaseUrl)));
 builder.Services.AddSingleton<FileStore>();
-builder.Services.AddSingleton<FileUploadedPublisher>();
+builder.Services.AddSingleton<QueuePublisher>();
 builder.Services.AddHttpClient<FoundryChatClient>();
 builder.Services.AddCors(options =>
 {
@@ -213,10 +213,12 @@ app.MapGet("/files", async (Guid? organizationId, HttpContext http, EisenbergDb 
     }).ToListAsync());
 });
 
-app.MapPost("/files", async (HttpRequest request, HttpContext http, EisenbergDb db, FileStore store, FileUploadedPublisher publisher) =>
+app.MapPost("/files", async (HttpRequest request, HttpContext http, EisenbergDb db, FileStore store, QueuePublisher publisher) =>
 {
     var user = Current(http);
     if (user.Role != "user") return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!publisher.IsConnected)
+        return Results.Problem("RABBITMQ_URL is required.", statusCode: StatusCodes.Status503ServiceUnavailable);
     if (!request.HasFormContentType) return Results.BadRequest("Expected a file upload.");
     var form = await request.ReadFormAsync();
     if (!Guid.TryParse(form["organizationId"], out var organizationId))
@@ -238,7 +240,7 @@ app.MapPost("/files", async (HttpRequest request, HttpContext http, EisenbergDb 
     file.StorageLocation = await store.SaveAsync(file.Id, uploaded);
     db.Files.Add(file);
     await db.SaveChangesAsync();
-    publisher.Publish(file.Id);
+    publisher.PublishFileUploaded(file.Id);
     return Results.Json(new { file.Id, file.Status });
 });
 
@@ -310,6 +312,15 @@ app.MapPost("/settings-mismatches", async (MismatchBody body, HttpContext http, 
     return Results.NoContent();
 });
 
+app.MapForms();
+
+// Temporary empty list until instance building from documents is wired to the extension.
+app.MapGet("/form-instances", (HttpContext http) =>
+{
+    if (Current(http).Role != "user") return Results.StatusCode(StatusCodes.Status403Forbidden);
+    return Results.Json(new { model = new { properties = Array.Empty<object>() }, instances = Array.Empty<object>() });
+});
+
 app.Run();
 
 static AppUser Current(HttpContext http) => (AppUser)http.Items["user"]!;
@@ -327,8 +338,25 @@ sealed record MismatchBody(Guid OrganizationId, string Text);
 
 sealed class FileStore
 {
-    private readonly string _root = Environment.GetEnvironmentVariable("FILE_STORAGE_ROOT")
-        ?? Path.Combine(Directory.GetCurrentDirectory(), "..", "data", "files");
+    private readonly string _root;
+
+    public FileStore(IConfiguration configuration)
+    {
+        _root = Path.GetFullPath(configuration["FILE_STORAGE_ROOT"] is { Length: > 0 } root
+            ? root
+            : Path.Combine(Directory.GetCurrentDirectory(), "..", "data", "files"));
+    }
+
+    public string Root => _root;
+
+    public bool IsUnderRoot(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var prefix = _root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                     + Path.DirectorySeparatorChar;
+        return full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(full, _root, StringComparison.OrdinalIgnoreCase);
+    }
 
     public async Task<string> SaveAsync(Guid id, IFormFile file)
     {
@@ -346,12 +374,15 @@ sealed class FileStore
     }
 }
 
-sealed class FileUploadedPublisher : IDisposable
+sealed class QueuePublisher : IDisposable
 {
+    private const string FileUploaded = "file-uploaded";
+    private const string InterpretationRequested = "form-interpretation-requested";
     private readonly IConnection? _connection;
     private readonly IModel? _channel;
+    private readonly object _gate = new();
 
-    public FileUploadedPublisher(IConfiguration configuration)
+    public QueuePublisher(IConfiguration configuration)
     {
         var url = configuration["RABBITMQ_URL"];
         if (string.IsNullOrWhiteSpace(url))
@@ -359,14 +390,23 @@ sealed class FileUploadedPublisher : IDisposable
         var factory = new ConnectionFactory { Uri = new Uri(url) };
         _connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
-        _channel.QueueDeclare("file-uploaded", durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueDeclare(FileUploaded, durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueDeclare(InterpretationRequested, durable: true, exclusive: false, autoDelete: false);
     }
 
-    public void Publish(Guid fileId)
+    public bool IsConnected => _channel is not null;
+
+    public void PublishFileUploaded(Guid fileId) => Publish(FileUploaded, fileId);
+
+    public void PublishInterpretationRequested(Guid runId) => Publish(InterpretationRequested, runId);
+
+    private void Publish(string queue, Guid id)
     {
         if (_channel is null)
             throw new InvalidOperationException("RABBITMQ_URL is required.");
-        _channel.BasicPublish("", "file-uploaded", body: Encoding.UTF8.GetBytes(fileId.ToString()));
+        // A RabbitMQ channel must not be used from two requests at once.
+        lock (_gate)
+            _channel.BasicPublish("", queue, body: Encoding.UTF8.GetBytes(id.ToString()));
     }
 
     public void Dispose()
@@ -425,7 +465,7 @@ static class Seed
     {
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<EisenbergDb>();
-        await db.Database.EnsureCreatedAsync();
+        await Schema.EnsureAsync(db);
         if (!await db.GlobalContentUnderstanding.AnyAsync())
             db.GlobalContentUnderstanding.Add(new GlobalContentUnderstanding { Id = 1, Enabled = false });
         if (await db.Users.AnyAsync())

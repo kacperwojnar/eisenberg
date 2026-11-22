@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Eisenberg.Data;
+using Eisenberg.Worker.Interpretation;
 using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -13,7 +14,10 @@ var databaseUrl = builder.Configuration["DATABASE_URL"]
 builder.Services.AddDbContext<EisenbergDb>(options =>
     options.UseNpgsql(ConnectionStrings.ToNpgsql(databaseUrl)));
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("interpretation", client => client.Timeout = TimeSpan.FromMinutes(6));
+builder.Services.AddSingleton<Interpreter>();
 builder.Services.AddHostedService<FileUploadedConsumer>();
+builder.Services.AddHostedService<InterpretationConsumer>();
 
 var app = builder.Build();
 app.Run();

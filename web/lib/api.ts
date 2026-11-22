@@ -9,6 +9,12 @@ export function setDevRole(role: DevRole) {
   localStorage.setItem("eisenberg-dev-user", role);
 }
 
+export async function apiBlobUrl(path: string): Promise<string> {
+  const response = await fetch("http://localhost:5000" + path, { headers: { "X-Dev-User": devRole() } });
+  if (!response.ok) throw new Error(await response.text());
+  return URL.createObjectURL(await response.blob());
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("X-Dev-User", devRole());

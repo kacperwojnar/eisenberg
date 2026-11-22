@@ -8,4 +8,7 @@
     <ProjectReference Include="..\data\Eisenberg.Data.csproj" />
     <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Interpretation\*.js" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

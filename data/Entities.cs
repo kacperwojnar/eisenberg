@@ -61,3 +61,92 @@ public sealed class GlobalContentUnderstanding
     public int Id { get; set; }
     public bool Enabled { get; set; }
 }
+
+public sealed class FormDefinition
+{
+    public Guid Id { get; set; }
+    public string Address { get; set; } = "";
+    public string Description { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? PublishedModelId { get; set; }
+    public List<InterpretationRun> Runs { get; set; } = [];
+    public List<FormPublication> Publications { get; set; } = [];
+}
+
+public static class RunStatus
+{
+    public const string Queued = "queued";
+    public const string Running = "running";
+    public const string WaitingForSignIn = "waiting-for-sign-in";
+    public const string BuildingModel = "building-model";
+    public const string Checking = "checking";
+    public const string Finished = "finished";
+    public const string Failed = "failed";
+    public const string NotConnected = "not-connected";
+
+    public static bool IsActive(string status) =>
+        status is Running or WaitingForSignIn or BuildingModel or Checking;
+}
+
+public sealed class InterpretationRun
+{
+    public Guid Id { get; set; }
+    public Guid FormId { get; set; }
+    public string Description { get; set; } = "";
+    public string Status { get; set; } = RunStatus.Queued;
+    public string StatusText { get; set; } = "";
+    public string? LiveViewUrl { get; set; }
+    public bool SignInConfirmed { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? FinishedAt { get; set; }
+    public int ActionCount { get; set; }
+    public int StateCount { get; set; }
+    public string? ReportJson { get; set; }
+    public FormDefinition Form { get; set; } = null!;
+}
+
+public static class ModelStatus
+{
+    public const string Draft = "draft";
+    public const string Published = "published";
+}
+
+public sealed class FormModelVersion
+{
+    public Guid Id { get; set; }
+    public Guid FormId { get; set; }
+    public Guid RunId { get; set; }
+    public int Number { get; set; }
+    public string Status { get; set; } = ModelStatus.Draft;
+    public string ModelJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? PublishedAt { get; set; }
+}
+
+public sealed class ChoiceList
+{
+    public Guid Id { get; set; }
+    public Guid ModelId { get; set; }
+    public string ControlKey { get; set; } = "";
+    public bool IsComplete { get; set; }
+    public string DependsOnJson { get; set; } = "[]";
+    public string ChoicesJson { get; set; } = "[]";
+}
+
+public sealed class FormPublication
+{
+    public Guid FormId { get; set; }
+    public Guid OrganizationId { get; set; }
+}
+
+public sealed class RunArtifact
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public int Sequence { get; set; }
+    public string Kind { get; set; } = "";
+    public string Caption { get; set; } = "";
+    public string StorageLocation { get; set; } = "";
+    public string ContentType { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+}

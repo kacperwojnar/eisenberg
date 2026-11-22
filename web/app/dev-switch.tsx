@@ -24,6 +24,7 @@ export function DevSwitch() {
         <>
           <Link href="/admin/organizations">Organizations</Link>
           <Link href="/admin/users">Users</Link>
+          <Link href="/admin/forms">Forms</Link>
           <Link href="/admin/mismatches">Mismatches</Link>
           <Link href="/admin/content-understanding">Content Understanding</Link>
         </>

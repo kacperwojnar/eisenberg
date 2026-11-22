@@ -22,7 +22,7 @@ Target framework: `net11.0`.
 
 Web: current stable Next.js with the App Router. TypeScript. English text.
 
-Extension: plain Manifest V3, no extension framework. Chrome and Edge. A side panel. The current assumption is a chat. No admin UI inside the extension.
+Extension: plain Manifest V3, no extension framework. Chrome and Edge. A side panel. No admin UI inside the extension. Filling is specified in `docs/form-model-specification.md`.
 
 ## Local infrastructure
 
@@ -35,7 +35,7 @@ Neon remains the chosen hosted database. The container is a stand-in. Local `dot
 
 Do not add Qdrant, Blob, Foundry, or Entra containers. Those are configured by URL and key later.
 
-RabbitMQ queue name: `file-uploaded`. One message means a file was stored and the worker should process it. No other queues.
+RabbitMQ queues: `file-uploaded`, where one message means a file was stored and the worker should process it, and `form-interpretation-requested`, where one message means the admin started an interpretation. No other queues.
 
 ## Configuration
 
@@ -54,6 +54,10 @@ RabbitMQ queue name: `file-uploaded`. One message means a file was stored and th
 | `CONTENT_UNDERSTANDING_API_KEY` | worker | Same as above. |
 | `QDRANT_URL` | API, worker | Retrieval returns no fragments. The worker does not write vectors. |
 | `QDRANT_API_KEY` | API, worker | Same as above. |
+| `PLAYWRIGHT_MCP_URL` | worker | An interpretation run is marked not connected. |
+| `PLAYWRIGHT_MCP_API_KEY` | worker | Same as above. |
+| `FOUNDRY_AGENT_DEPLOYMENT` | worker | Same as above. The model of the agent is decided by the first test. |
+| `FOUNDRY_MODEL_DEPLOYMENT` | worker | Default `claude-sonnet-5-5`. Builds the form model. |
 | `ENTRA_TENANT_ID` | API | See auth below. |
 | `ENTRA_API_CLIENT_ID` | API | See auth below. |
 | `DEVELOPMENT_AUTH` | API | `true` only in the example file. |
@@ -86,7 +90,7 @@ Only these records.
 
 **Content Understanding.** Three on/off values, set by the admin: one global value for everyone, one optional value on a user, one optional value on an import. Which value wins when they disagree was not decided. Store all three. Do not invent the combination.
 
-Do not add a table of pages or form descriptions.
+**Forms and models.** The form, its interpretation runs, model versions, choice lists, and publications, as specified in `docs/form-model-specification.md`.
 
 ## API surface
 
@@ -115,9 +119,9 @@ Uploading a file saves the bytes, inserts the row with status `stored`, and publ
 
 ## Worker
 
-The worker only consumes `file-uploaded`.
+The worker consumes `file-uploaded` and `form-interpretation-requested`.
 
-For each message:
+For each `file-uploaded` message:
 
 1. Set the file status to `processing`.
 2. If Content Understanding is not configured, or `IsContentUnderstandingEnabled` is false, set the status back to `stored` and finish. Do not add another reader. Which switch wins is an open question, so that method returns only the global value until the combination is decided.
@@ -127,6 +131,8 @@ For each message:
 6. On a thrown error, set status to `failed`.
 
 Do not invent a chunk size, an embedding model, or a Qdrant collection schema beyond file id, organization id, and text. Put those three fields in one payload so it can be replaced later.
+
+For each `form-interpretation-requested` message, the worker runs the interpretation specified in `docs/form-model-specification.md`. When the Playwright workspace or the Foundry values are empty, it marks the run as not connected and finishes.
 
 ## Web screens
 
@@ -138,6 +144,7 @@ Admin:
 - User list and a form with email, role, and organization.
 - Settings-mismatch list, and a text field that replaces that organization's settings. No extra setting fields.
 - One control for Content Understanding for everyone, one on each user, and one on each import. No upload and no delete on the import list.
+- Forms: a list and a form with the address and the description. A page per form with its runs, the live view link while a run waits for signing in, the report, the screenshots, the draft model with editing, the choice lists, and publishing to organizations.
 
 User:
 
@@ -162,7 +169,7 @@ The side panel is a chat transcript and a text box. Sending calls `POST /chat` w
 - Add an admin screen for files or for filled forms.
 - Add update or delete for filled-form info.
 - Choose an embeddings model.
-- Add a second queue, a fourth service, or a database other than PostgreSQL.
+- Add a queue other than the two above, a fourth service, or a database other than PostgreSQL.
 - Commit `.env` or uploaded files.
 - Use the project name eisenberg. Do not invent a second name.
 
@@ -174,5 +181,6 @@ The side panel is a chat transcript and a text box. Sending calls `POST /chat` w
 - The worker consumes that message and leaves the status at `stored` while Content Understanding, embeddings, and Qdrant are empty.
 - Delete removes the row and the local bytes.
 - The filled-form list has no edit or delete.
+- Starting an interpretation without the Playwright workspace and Foundry values marks the run as not connected.
 - The extension side panel sends a message and shows the "model is not connected" sentence.
 - The solution builds.
