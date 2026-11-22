@@ -24,6 +24,7 @@ interface IChatModel
     string Deployment { get; }
     ModelUsage Usage { get; }
     Task<AssistantTurn> NextAsync(string system, IReadOnlyList<ChatItem> history, IReadOnlyList<ToolSpec> tools, int maxTokens, CancellationToken cancellationToken);
+    Task<string> LookAsync(string system, string text, string mediaType, string base64, CancellationToken cancellationToken);
 }
 
 static class ChatModels
@@ -140,6 +141,33 @@ sealed class AnthropicModel(HttpClient http, string endpoint, string apiKey, str
         return new AssistantTurn(text.ToString(), calls);
     }
 
+    public async Task<string> LookAsync(string system, string text, string mediaType, string base64, CancellationToken cancellationToken)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = deployment,
+            ["max_tokens"] = 800,
+            ["system"] = system,
+            ["messages"] = new JsonArray(new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = new JsonArray(
+                    new JsonObject
+                    {
+                        ["type"] = "image",
+                        ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = mediaType, ["data"] = base64 }
+                    },
+                    new JsonObject { ["type"] = "text", ["text"] = text })
+            })
+        };
+        var root = await ChatModels.PostAsync(http, endpoint.TrimEnd('/') + "/anthropic/v1/messages", apiKey, body, deployment,
+            cancellationToken, ("anthropic-version", "2023-06-01"));
+        Usage.Calls++;
+        Usage.InputTokens += Json.Int(root["usage"]?["input_tokens"]);
+        Usage.OutputTokens += Json.Int(root["usage"]?["output_tokens"]);
+        return string.Join("", Json.Array(root["content"]).Where(block => Json.Str(block?["type"]) == "text").Select(block => Json.Str(block?["text"])));
+    }
+
     private static void Append(JsonArray messages, string role, params JsonObject[] blocks)
     {
         if (messages.Count > 0 && Json.Str(messages[messages.Count - 1]?["role"]) == role)
@@ -223,5 +251,29 @@ sealed class OpenAiModel(HttpClient http, string endpoint, string apiKey, string
             return new ToolCall(Json.Str(call?["id"]), Json.Str(call?["function"]?["name"]), arguments);
         }).ToList();
         return new AssistantTurn(reply?["content"] is null ? "" : Json.Str(reply["content"]), calls);
+    }
+
+    public async Task<string> LookAsync(string system, string text, string mediaType, string base64, CancellationToken cancellationToken)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = deployment,
+            ["messages"] = new JsonArray(
+                new JsonObject { ["role"] = "system", ["content"] = system },
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray(
+                        new JsonObject { ["type"] = "text", ["text"] = text },
+                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = $"data:{mediaType};base64,{base64}" } })
+                }),
+            ["max_completion_tokens"] = 800
+        };
+        var root = await ChatModels.PostAsync(http, endpoint.TrimEnd('/') + "/openai/v1/chat/completions", apiKey, body, deployment, cancellationToken);
+        Usage.Calls++;
+        Usage.InputTokens += Json.Int(root["usage"]?["prompt_tokens"]);
+        Usage.OutputTokens += Json.Int(root["usage"]?["completion_tokens"]);
+        var content = root["choices"]?[0]?["message"]?["content"];
+        return content is null ? "" : Json.Str(content);
     }
 }

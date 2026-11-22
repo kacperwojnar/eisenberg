@@ -128,9 +128,42 @@
     }
     if (element.multiple) result.multiple = true;
     if (element.readOnly || element.getAttribute("aria-readonly") === "true") result.readonly = true;
+    for (const attribute of ["aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext"]) {
+      const value = element.getAttribute(attribute);
+      if (value !== null && value !== "") result[attribute.slice("aria-".length)] = value;
+    }
     return result;
   };
   const disabled = (element) => !!(element.disabled || element.getAttribute("aria-disabled") === "true");
+  const rowsIn = (source) => {
+    const roles = [...source.querySelectorAll("[role=option], [role=menuitem]")];
+    if (roles.length) return roles;
+    const lists = [source, ...source.querySelectorAll("ul, ol")];
+    for (const list of lists) {
+      const items = [...list.children].filter((child) => child.tagName === "LI" && clean(child.textContent));
+      if (items.length >= 2) return items;
+    }
+    let best = [];
+    const parents = new Set([...source.querySelectorAll("div, li")].map((node) => node.parentElement).filter(Boolean));
+    parents.add(source);
+    for (const parent of parents) {
+      const children = [...parent.children].filter((child) => {
+        if (child.tagName !== "DIV" && child.tagName !== "LI") return false;
+        const text = clean(child.innerText || child.textContent);
+        return text && text.length <= 200 && !child.querySelector("input, select, textarea");
+      });
+      if (children.length > best.length) best = children;
+    }
+    return best.length >= 2 ? best : [];
+  };
+  const shallowRows = (element) => {
+    const text = (node) => clean(node.innerText || node.textContent);
+    const usable = (node) => text(node) && text(node).length <= 200;
+    const direct = [...element.querySelectorAll(":scope > [role=option], :scope > [role=menuitem], :scope > li")].filter(usable);
+    if (direct.length >= 2) return direct;
+    const nested = [...element.querySelectorAll(":scope > * > [role=option], :scope > * > [role=menuitem], :scope > ul > li, :scope > ol > li, :scope > * > li")].filter(usable);
+    return nested.length >= 2 ? nested : [];
+  };
   const optionOf = (element) => ({
     value: clean(element.getAttribute("data-value") || element.getAttribute("value") || element.id || element.textContent),
     text: cut(element.getAttribute("aria-label") || element.textContent, 200),
@@ -164,7 +197,7 @@
     if (native) return native === "text" && role === "combobox" ? "combobox" : native;
     if (roleKinds[role]) return roleKinds[role];
     const editable = element.getAttribute("contenteditable");
-    if (editable === "" || editable === "true") return "text";
+    if (editable === "" || editable === "true" || editable === "plaintext-only") return "text";
     if (element.tagName === "BUTTON" || role === "button") return element.hasAttribute("aria-pressed") ? "toggle" : null;
     return null;
   };
@@ -294,7 +327,15 @@
       const owned = (element.getAttribute("aria-controls") || element.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean)
         .map((id) => byId(element, id)).filter(Boolean);
       const sources = kind === "listbox" ? [element, ...owned] : owned;
-      const nodes = sources.flatMap((source) => [...source.querySelectorAll("[role=option]")]);
+      const nodes = [];
+      const seenRows = new Set();
+      for (const source of sources) {
+        for (const row of rowsIn(source)) {
+          if (seenRows.has(row)) continue;
+          seenRows.add(row);
+          nodes.push(row);
+        }
+      }
       const options = nodes.map(optionOf);
       entry.scrollable = sources.some((source) => source.scrollHeight > source.clientHeight + 4);
       if (tag === "INPUT" && element.list) for (const option of element.list.options) options.push({ value: option.value, text: cut(option.label || option.value, 200), disabled: option.disabled });
@@ -320,6 +361,14 @@
       group.options.push({ value: name || element.id, text: name, selector: entry.selector, disabled: entry.disabled });
       if (element.getAttribute("aria-selected") === "true") group.selected.push(name || element.id);
     } else {
+      if (tag === "INPUT" && element.list) {
+        const options = [...element.list.options];
+        entry.options = options.slice(0, maxOptions).map((option) => ({
+          value: option.value, text: cut(option.label || option.value, 200), disabled: option.disabled
+        }));
+        entry.optionsComplete = options.length <= maxOptions;
+        entry.optionCount = options.length;
+      }
       if (kind === "checkbox" || kind === "switch" || kind === "toggle") {
         const on = element.checked || element.getAttribute("aria-checked") === "true" || element.getAttribute("aria-pressed") === "true";
         entry.options = [{ value: "true", text: "on" }, { value: "false", text: "off" }];
@@ -328,6 +377,8 @@
         entry.hasValue = on;
       } else {
         entry.hasValue = "value" in element ? element.value !== "" : clean(element.textContent) !== "";
+        const ariaNow = element.getAttribute("aria-valuenow");
+        if ((kind === "slider" || kind === "number") && ariaNow) entry.hasValue = ariaNow !== "";
       }
       entry.question = questionText(element, [element], heading);
       controls.push(entry);
@@ -335,6 +386,36 @@
   }
 
   for (const [group, nodes] of members) group.question = questionText(nodes.length > 1 ? commonAncestor(nodes) : nodes[0], nodes, group.heading);
+
+  const knownOptionSelectors = new Set();
+  for (const control of controls) for (const option of control.options || []) if (option.selector) knownOptionSelectors.add(option.selector);
+  for (const element of elements) {
+    if (controls.length >= maxControls || !rendered(element) || element.closest(cookieSelector)) continue;
+    if (element.closest("header, nav, footer, [role=navigation], [role=banner], [role=contentinfo]") || ["HEADER", "NAV", "FOOTER"].includes(element.tagName)) continue;
+    const style = getComputedStyle(element);
+    const role = (element.getAttribute("role") || "").toLowerCase();
+    const overlay = style.position === "fixed" || role === "listbox" || role === "menu" || (style.position === "absolute" && style.zIndex !== "auto");
+    if (!overlay) continue;
+    const box = element.getBoundingClientRect();
+    const coversPage = box.width > window.innerWidth * 0.85 && box.height > window.innerHeight * 0.7;
+    if (coversPage && role !== "listbox" && role !== "menu") continue;
+    if (role !== "listbox" && role !== "menu" && box.width > window.innerWidth * 0.9 && box.height < 120) continue;
+    const rows = (role === "listbox" || role === "menu" ? rowsIn(element) : shallowRows(element)).filter((row) => !knownOptionSelectors.has(selectorOf(row)));
+    const linkRows = rows.filter((row) => row.closest("a") || row.querySelector("a[href]"));
+    if (rows.length < 2 || controls.some((control) => control.selector === selectorOf(element))) continue;
+    if (role !== "listbox" && linkRows.length >= Math.ceil(rows.length * 0.8)) continue;
+    const options = rows.slice(0, maxOptions).map(optionOf);
+    for (const option of options) if (option.selector) knownOptionSelectors.add(option.selector);
+    controls.push({
+      kind: "listbox", tag: element.tagName.toLowerCase(), type: "", role, id: element.id || "",
+      nameAttribute: element.getAttribute("name") || "",
+      testId: element.getAttribute("data-testid") || element.getAttribute("data-test") || element.getAttribute("data-qa") || "",
+      name: cut(element.getAttribute("aria-label") || "Open list"), question: "", heading, selector: selectorOf(element),
+      required: false, disabled: disabled(element), constraints: {}, options,
+      optionsComplete: rows.length <= maxOptions && element.scrollHeight <= element.clientHeight + 4,
+      optionCount: rows.length, selected: [], hasValue: false, scrollable: element.scrollHeight > element.clientHeight + 4
+    });
+  }
 
   for (let index = 0; index < controls.length; index++) {
     const control = controls[index];

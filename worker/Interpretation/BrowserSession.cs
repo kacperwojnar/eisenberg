@@ -108,7 +108,7 @@ sealed class BrowserSession
 
     public async Task<McpImage?> ScreenshotAsync(CancellationToken cancellationToken)
     {
-        var result = await CallAsync("browser_take_screenshot", new JsonObject { ["type"] = "jpeg" }, cancellationToken);
+        var result = await CallAsync("browser_take_screenshot", new JsonObject { ["type"] = "jpeg", ["scale"] = "css" }, cancellationToken);
         return result.IsError ? null : result.Images.FirstOrDefault();
     }
 

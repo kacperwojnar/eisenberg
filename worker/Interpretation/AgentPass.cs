@@ -6,6 +6,8 @@ namespace Eisenberg.Worker.Interpretation;
 
 sealed record PassSettings(int MaxActions, TimeSpan MaxDuration, int MaxSweepOptions);
 
+sealed record VisualTarget(int X, int Y, string Kind);
+
 sealed record PassOutcome(string StoppedBecause, string Summary);
 
 interface IRunRecorder
@@ -42,6 +44,7 @@ sealed class AgentPass(
     private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(15);
 
     private readonly HashSet<string> _fingerprints = [];
+    private readonly HashSet<int> _visualSteps = [];
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private PassOutcome? _outcome;
 
@@ -93,7 +96,7 @@ sealed class AgentPass(
         {
             var text = call.Name switch
             {
-                "next_item" => ledger.Next().ToJsonString(),
+                "next_item" => await NextItemAsync(cancellationToken),
                 "try_all_options" => await TryAllOptionsAsync(Json.Str(call.Arguments["controlKey"]), cancellationToken),
                 "collect_options" => await CollectOptionsAsync(Json.Str(call.Arguments["controlKey"]), cancellationToken),
                 "skip_item" => Skip(call.Arguments),
@@ -329,6 +332,125 @@ sealed class AgentPass(
             ledger.FinalStepReached = true;
         _outcome = new PassOutcome(reason.Length > 0 ? reason : "finished", Json.Str(arguments["summary"]));
         return "Finished.";
+    }
+
+    private async Task<string> NextItemAsync(CancellationToken cancellationToken)
+    {
+        var item = ledger.Next();
+        var kind = Json.Str(item["kind"]);
+        if (kind is "continue" or "done" && ledger.Current is { } state && _visualSteps.Add(state.Step))
+        {
+            var found = await VisualAsync(cancellationToken);
+            item = ledger.Next();
+            if (found > 0)
+                item["instruction"] = $"The screenshot check opened {found} control(s) that were not in the list. " + Json.Str(item["instruction"]);
+        }
+        return item.ToJsonString();
+    }
+
+    // A custom list or grid is not in the control list, so the screenshot is only used to choose a click. The script reads the page afterwards.
+    private async Task<int> VisualAsync(CancellationToken cancellationToken)
+    {
+        var found = 0;
+        try
+        {
+            await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
+            var seen = new HashSet<string>();
+            var scrollY = 0;
+            for (var viewport = 0; viewport < 6 && !OverBudget(out _); viewport++)
+            {
+                var shot = await session.ScreenshotAsync(cancellationToken);
+                if (shot is null) break;
+                var leftThePage = false;
+                foreach (var target in (await TargetsAsync(shot, cancellationToken)).Take(3))
+                {
+                    if (!seen.Add($"{scrollY}:{target.X / 8}:{target.Y / 8}")) continue;
+                    var before = ledger.Controls.Count;
+                    var click = await session.CallAsync("browser_run_code", new JsonObject
+                    {
+                        ["code"] = $"await page.mouse.click({target.X}, {target.Y}); await page.waitForTimeout(400); return {{ ok: true }};"
+                    }, cancellationToken);
+                    if (click.IsError) continue;
+                    var diff = await CaptureAsync("visual-click", new JsonObject { ["x"] = target.X, ["y"] = target.Y, ["kind"] = target.Kind }, null, null, false, cancellationToken);
+                    var added = ledger.Controls.Count - before;
+                    if (added > 0) found += added;
+                    else ledger.Problems.Add($"A screenshot showed a {target.Kind} at {target.X},{target.Y}, but the opened page still had no readable control.");
+                    await session.CallAsync("browser_run_code", new JsonObject { ["code"] = "await page.keyboard.press(\"Escape\"); await page.waitForTimeout(150); return { ok: true };" }, cancellationToken);
+                    if (!diff.UrlChanged) continue;
+                    leftThePage = true;
+                    break;
+                }
+                if (leftThePage) break;
+                var scroll = await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("by") }, cancellationToken);
+                var moved = Json.FirstValue(scroll.Text, item => item?["moved"] is not null);
+                if (scroll.IsError || !Json.Bool(moved?["moved"])) break;
+                scrollY = Number(moved?["y"]);
+            }
+            await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ledger.Problems.Add("The screenshot check failed: " + Json.Trim(ex.Message, 200));
+        }
+        return found;
+    }
+
+    private async Task<List<VisualTarget>> TargetsAsync(McpImage shot, CancellationToken cancellationToken)
+    {
+        var state = ledger.Current;
+        var known = state is null
+            ? ""
+            : string.Join("\n", state.Controls.Select(control => control.Label).Concat(state.Buttons.Select(button => button.Text)).Where(text => text.Length > 0).Distinct().Take(80));
+        var reply = await model.LookAsync(
+            "You compare a form screenshot with the controls already read from the page code.",
+            "These controls are already recorded:\n" + known + """
+
+            Point at a visible dropdown, openable list, or editable grid that is not one of those controls.
+            Return only JSON: {"targets":[{"x":0,"y":0,"kind":"list"}]}
+            x and y are CSS pixels in the image, origin at the top-left. kind is "list" or "grid".
+            At most 3 targets. If nothing is missing, return {"targets":[]}.
+            Never point at a button that submits, pays, buys, or sends the form.
+            """,
+            shot.MimeType.Length > 0 ? shot.MimeType : "image/jpeg",
+            shot.Base64,
+            cancellationToken);
+        var node = Json.FirstValue(reply, item => item?["targets"] is JsonArray);
+        var targets = new List<VisualTarget>();
+        foreach (var target in Json.Array(node?["targets"]))
+        {
+            var x = Number(target?["x"]);
+            var y = Number(target?["y"]);
+            if (x < 0 || y < 0 || x > 4000 || y > 4000) continue;
+            var kind = Json.Str(target?["kind"]);
+            targets.Add(new VisualTarget(x, y, kind is "grid" ? "grid" : "list"));
+        }
+        return targets;
+    }
+
+    private static string ScrollCode(string action) =>
+        "return await page.evaluate(() => {" +
+        "const doc = document.scrollingElement || document.documentElement;" +
+        "let node = doc; let delta = doc.scrollHeight - doc.clientHeight;" +
+        "for (const item of document.querySelectorAll('body *')) {" +
+        "const style = getComputedStyle(item);" +
+        "if (!/(auto|scroll|overlay)/.test(style.overflowY)) continue;" +
+        "const range = item.scrollHeight - item.clientHeight;" +
+        "if (range > delta && item.clientHeight > 80) { node = item; delta = range; }" +
+        "}" +
+        "const useWindow = node === doc || node === document.body;" +
+        (action == "top"
+            ? "if (useWindow) window.scrollTo(0, 0); else node.scrollTop = 0; return { ok: true };"
+            : "const before = useWindow ? window.scrollY : node.scrollTop;" +
+              "if (useWindow) window.scrollBy(0, Math.round((useWindow ? window.innerHeight : node.clientHeight) * 0.8));" +
+              "else node.scrollTop = before + Math.round(node.clientHeight * 0.8);" +
+              "const after = useWindow ? window.scrollY : node.scrollTop;" +
+              "return { moved: after !== before, y: after };") +
+        "});";
+
+    private static int Number(JsonNode? node)
+    {
+        if (node is JsonValue value && value.TryGetValue<double>(out var number)) return (int)Math.Round(number);
+        return Json.Int(node);
     }
 
     private async Task<StateDiff> CaptureAsync(string tool, JsonObject arguments, string? controlKey, string? value, bool movesOn, CancellationToken cancellationToken)
