@@ -6,9 +6,14 @@ import { devRole, setDevRole, type DevRole } from "../lib/api";
 
 export function DevSwitch() {
   const [role, setRole] = useState<DevRole>("user");
+  const [entra, setEntra] = useState(false);
 
   useEffect(() => {
     setRole(devRole());
+    fetch("/backend/auth")
+      .then((response) => response.json())
+      .then((body) => setEntra(body.mode === "entra"))
+      .catch(() => undefined);
   }, []);
 
   function choose(next: DevRole) {
@@ -31,14 +36,19 @@ export function DevSwitch() {
       ) : (
         <>
           <Link href="/files">Files</Link>
+          <Link href="/instances">Records</Link>
           <Link href="/filled-forms">Filled forms</Link>
           <Link href="/settings">Settings</Link>
         </>
       )}
-      <span className="note">Development switch. Removed when Entra is connected.</span>
-      <button type="button" onClick={() => choose(role === "admin" ? "user" : "admin")}>
-        Switch to {role === "admin" ? "user" : "admin"}
-      </button>
+      {entra ? <a href="/login">Sign in</a> : (
+        <>
+          <span className="note">Development switch. Removed when Entra is connected.</span>
+          <button type="button" onClick={() => choose(role === "admin" ? "user" : "admin")}>
+            Switch to {role === "admin" ? "user" : "admin"}
+          </button>
+        </>
+      )}
     </nav>
   );
 }

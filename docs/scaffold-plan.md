@@ -124,7 +124,7 @@ The worker consumes `file-uploaded` and `form-interpretation-requested`.
 For each `file-uploaded` message:
 
 1. Set the file status to `processing`.
-2. If Content Understanding is not configured, or `IsContentUnderstandingEnabled` is false, set the status back to `stored` and finish. Do not add another reader. Which switch wins is an open question, so that method returns only the global value until the combination is decided.
+2. Whether the file is read is decided by `ContentUnderstandingRules`: the import switch, otherwise the user switch, otherwise the global switch. When the result is off, or Content Understanding is not configured, set the status back to `stored` and finish. Do not add another reader.
 3. If the call is enabled and configured, send the file and keep the returned text.
 4. If the embeddings deployment and Qdrant are configured, write the fragments to Qdrant with the file id and the organization id, then set status to `ready`.
 5. If they are not configured, set status to `stored`.
@@ -148,9 +148,10 @@ Admin:
 
 User:
 
-- File list, a file input, and a delete control on each row. Show the status.
+- File list for the files the caller uploaded, a file input, and a delete control on each row. Show the status. A user does not see another user's files.
 - Filled-form list. Each row shows the time and the summary. No edit control and no delete control.
-- Settings route that renders one sentence: settings have not been specified.
+- Records built from the published model and the organization's document readings. The user can correct a record and can add one.
+- Settings route that shows the settings text of each organization the caller belongs to. The user does not edit it.
 
 The development switch sits in the layout.
 

@@ -15,6 +15,7 @@ static class FormEndpoints
                 .OrderByDescending(r => r.CreatedAt).ToListAsync();
             var published = await db.ModelVersions.Where(m => formIds.Contains(m.FormId) && m.Status == ModelStatus.Published)
                 .Select(m => new { m.Id, m.Number }).ToListAsync();
+            var orgNames = await db.Organizations.ToDictionaryAsync(o => o.Id, o => o.Name);
             return Results.Json(forms.Select(f =>
             {
                 var last = runs.FirstOrDefault(r => r.FormId == f.Id);
@@ -27,7 +28,8 @@ static class FormEndpoints
                     f.PublishedModelId,
                     publishedModelNumber = published.FirstOrDefault(m => m.Id == f.PublishedModelId)?.Number,
                     organizationIds = f.Publications.Select(p => p.OrganizationId),
-                    lastRun = last is null ? null : new { last.Id, last.Status, last.StatusText, last.CreatedAt }
+                    organizationNames = f.Publications.Select(p => orgNames.GetValueOrDefault(p.OrganizationId)).Where(name => name is not null),
+                    lastRun = last is null ? null : new { last.Id, last.Status, last.StatusText, last.CreatedAt, last.LiveViewUrl }
                 };
             }));
         });
@@ -104,6 +106,48 @@ static class FormEndpoints
             await db.SaveChangesAsync();
             publisher.PublishInterpretationRequested(run.Id);
             return Results.Json(new { runId = run.Id });
+        });
+
+        app.MapGet("/admin/form-changes", async (HttpContext http, EisenbergDb db) =>
+        {
+            if (!IsAdmin(http)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var rows = await db.FormChangeReports.OrderByDescending(item => item.CreatedAt).ToListAsync();
+            var forms = await db.Forms.ToDictionaryAsync(form => form.Id, form => form.Address);
+            var users = await db.Users.ToDictionaryAsync(user => user.Id, user => user.Email);
+            var orgs = await db.Organizations.ToDictionaryAsync(org => org.Id, org => org.Name);
+            return Results.Json(rows.Select(item => new
+            {
+                item.Id,
+                item.FormId,
+                address = forms.GetValueOrDefault(item.FormId) ?? "",
+                item.OrganizationId,
+                organizationName = orgs.GetValueOrDefault(item.OrganizationId) ?? "",
+                userEmail = users.GetValueOrDefault(item.UserId) ?? "",
+                item.CreatedAt,
+                item.Text,
+                handled = item.HandledAt is not null
+            }));
+        });
+
+        app.MapPost("/admin/form-changes/{id:guid}/run", async (Guid id, HttpContext http, EisenbergDb db, QueuePublisher publisher) =>
+        {
+            if (!IsAdmin(http)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (!publisher.IsConnected)
+                return Results.Problem("RABBITMQ_URL is required.", statusCode: StatusCodes.Status503ServiceUnavailable);
+            var report = await db.FormChangeReports.SingleOrDefaultAsync(item => item.Id == id);
+            if (report is null) return Results.NotFound();
+            var form = await db.Forms.SingleOrDefaultAsync(item => item.Id == report.FormId);
+            if (form is null) return Results.NotFound();
+            if (await db.InterpretationRuns.AnyAsync(r => r.FormId == form.Id &&
+                    (r.Status == RunStatus.Queued || r.Status == RunStatus.Running || r.Status == RunStatus.WaitingForSignIn ||
+                     r.Status == RunStatus.BuildingModel || r.Status == RunStatus.Checking)))
+                return Results.Conflict("A run for this form is still in progress.");
+            var run = NewRun(form);
+            db.InterpretationRuns.Add(run);
+            report.HandledAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            publisher.PublishInterpretationRequested(run.Id);
+            return Results.Json(new { runId = run.Id, formId = form.Id });
         });
 
         app.MapGet("/admin/runs/{id:guid}", async (Guid id, HttpContext http, EisenbergDb db) =>
@@ -195,7 +239,7 @@ static class FormEndpoints
             return Results.NoContent();
         });
 
-        app.MapPost("/admin/models/{id:guid}/publish", async (Guid id, PublishBody body, HttpContext http, EisenbergDb db) =>
+        app.MapPost("/admin/models/{id:guid}/publish", async (Guid id, PublishBody body, HttpContext http, EisenbergDb db, QueuePublisher publisher) =>
         {
             if (!IsAdmin(http)) return Results.StatusCode(StatusCodes.Status403Forbidden);
             var model = await db.ModelVersions.SingleOrDefaultAsync(m => m.Id == id);
@@ -209,6 +253,15 @@ static class FormEndpoints
             foreach (var organizationId in body.OrganizationIds.Distinct())
                 db.FormPublications.Add(new FormPublication { FormId = form.Id, OrganizationId = organizationId });
             await db.SaveChangesAsync();
+            if (publisher.IsConnected)
+            {
+                var files = await db.Files
+                    .Where(file => body.OrganizationIds.Contains(file.OrganizationId) && file.Reading != null && file.Reading != "")
+                    .Select(file => new { file.Id, file.OrganizationId })
+                    .ToListAsync();
+                foreach (var fileId in files.GroupBy(file => file.OrganizationId).Select(group => group.First().Id))
+                    publisher.PublishFileUploaded(fileId);
+            }
             return Results.NoContent();
         });
     }

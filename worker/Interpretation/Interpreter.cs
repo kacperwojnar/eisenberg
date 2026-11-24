@@ -16,7 +16,7 @@ sealed class Interpreter(IServiceProvider services, IConfiguration configuration
         if (run is null || run.Status != RunStatus.Running)
             return;
 
-        var missing = new[] { "PLAYWRIGHT_MCP_URL", "PLAYWRIGHT_MCP_API_KEY", "FOUNDRY_ENDPOINT", "FOUNDRY_API_KEY", "FOUNDRY_AGENT_DEPLOYMENT" }
+        var missing = new[] { "PLAYWRIGHT_MCP_URL", "PLAYWRIGHT_MCP_API_KEY", "FOUNDRY_ENDPOINT", "FOUNDRY_API_KEY" }
             .Where(name => string.IsNullOrWhiteSpace(configuration[name])).ToList();
         if (missing.Count > 0)
         {
@@ -34,9 +34,10 @@ sealed class Interpreter(IServiceProvider services, IConfiguration configuration
             Number("INTERPRETATION_MAX_SWEEP_OPTIONS", 60));
         var endpoint = configuration["FOUNDRY_ENDPOINT"]!;
         var apiKey = configuration["FOUNDRY_API_KEY"]!;
+        var agentDeployment = string.IsNullOrWhiteSpace(configuration["FOUNDRY_AGENT_DEPLOYMENT"]) ? "claude-haiku-5-5" : configuration["FOUNDRY_AGENT_DEPLOYMENT"]!;
         var builderDeployment = string.IsNullOrWhiteSpace(configuration["FOUNDRY_MODEL_DEPLOYMENT"]) ? "claude-sonnet-5-5" : configuration["FOUNDRY_MODEL_DEPLOYMENT"]!;
         var http = httpFactory.CreateClient("interpretation");
-        var agent = ChatModels.Create(http, endpoint, apiKey, configuration["FOUNDRY_AGENT_DEPLOYMENT"]!);
+        var agent = ChatModels.Create(http, endpoint, apiKey, agentDeployment);
         var builder = ChatModels.Create(http, endpoint, apiKey, builderDeployment);
         var recorder = new RunRecorder(db, run, StorageRoot());
         var ledger = new Ledger();
@@ -45,6 +46,22 @@ sealed class Interpreter(IServiceProvider services, IConfiguration configuration
         PassOutcome? outcome = null;
         BuiltModel? built = null;
 
+        async Task<BrowserSession> Reopen(CancellationToken ct)
+        {
+            try
+            {
+                if (session is not null) await session.CloseAsync();
+            }
+            catch (Exception)
+            {
+            }
+            var nextMcp = new McpClient(http, new Uri(configuration["PLAYWRIGHT_MCP_URL"]!), configuration["PLAYWRIGHT_MCP_API_KEY"]!);
+            session = await BrowserSession.OpenAsync(nextMcp, ct);
+            await ActionReplay.ReplayAsync(session, run.Form.Address, ledger.Actions, ct);
+            await recorder.SetStatusAsync(RunStatus.Running, "Restored the browser session.", session.LiveViewUrl, ct);
+            return session;
+        }
+
         try
         {
             await recorder.SetStatusAsync(RunStatus.Running, "Opening the remote browser.", null, cancellationToken);
@@ -52,15 +69,16 @@ sealed class Interpreter(IServiceProvider services, IConfiguration configuration
             session = await BrowserSession.OpenAsync(mcp, cancellationToken);
             await recorder.SetStatusAsync(RunStatus.Running, "Walking through the form.", session.LiveViewUrl, cancellationToken);
 
-            outcome = await new AgentPass(session, agent, ledger, recorder, settings, run.Form.Address, run.Description, logger).RunAsync(cancellationToken);
+            outcome = await new AgentPass(session, agent, ledger, recorder, settings, run.Form.Address, run.Description, logger, Reopen).RunAsync(false, cancellationToken);
             await recorder.SaveActionsAsync(ledger, cancellationToken);
-            await session.CloseAsync();
-            session = null;
 
             await recorder.SetStatusAsync(RunStatus.BuildingModel, "Building the model.", null, cancellationToken);
             built = await new ModelBuilder(builder).BuildAsync(ledger, run.Description, run.Form.Address, cancellationToken);
 
             await recorder.SetStatusAsync(RunStatus.Checking, "Checking the result.", null, cancellationToken);
+            var checks = await PassChecks.RunAsync(session, ledger, built, run.Form.Address, cancellationToken);
+            await session.CloseAsync();
+            session = null;
             var modelId = Guid.NewGuid();
             var lists = built.ChoiceLists.Select(list => new ChoiceList
             {
@@ -83,7 +101,7 @@ sealed class Interpreter(IServiceProvider services, IConfiguration configuration
                 CreatedAt = DateTimeOffset.UtcNow
             });
             db.ChoiceLists.AddRange(lists);
-            run.ReportJson = Report.Build(ledger, outcome, built, agent, builder, clock.Elapsed, null).ToJsonString();
+            run.ReportJson = Report.Build(ledger, outcome, built, agent, builder, clock.Elapsed, null, checks.Path, checks.Fill).ToJsonString();
             run.FinishedAt = DateTimeOffset.UtcNow;
             if (outcome?.StoppedBecause is "blocked" or "sign-in-timeout")
             {

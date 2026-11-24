@@ -26,7 +26,8 @@ sealed class AgentPass(
     PassSettings settings,
     string address,
     string description,
-    ILogger logger)
+    ILogger logger,
+    Func<CancellationToken, Task<BrowserSession>> reopen)
 {
     private static readonly HashSet<string> BrowserTools =
     [
@@ -47,45 +48,66 @@ sealed class AgentPass(
     private readonly HashSet<int> _visualSteps = [];
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private PassOutcome? _outcome;
+    private BrowserSession browser = session;
 
-    public async Task<PassOutcome> RunAsync(CancellationToken cancellationToken)
+    public void Use(BrowserSession next) => browser = next;
+
+    public async Task<PassOutcome> RunAsync(bool resume, CancellationToken cancellationToken)
     {
         var tools = BuildTools();
         var system = SystemPrompt();
-        var start = new JsonObject { ["url"] = address };
-        await session.CallAsync("browser_navigate", (JsonObject)start.DeepClone(), cancellationToken);
-        await CaptureAsync("browser_navigate", start, null, null, true, cancellationToken);
+        if (!resume)
+        {
+            var start = new JsonObject { ["url"] = address };
+            await browser.CallAsync("browser_navigate", (JsonObject)start.DeepClone(), cancellationToken);
+            await CaptureAsync("browser_navigate", start, null, null, true, cancellationToken);
+        }
 
-        var history = new List<ChatItem> { new UserText("The browser is on the start address. Call next_item.") };
+        var history = new List<ChatItem>
+        {
+            new UserText(resume
+                ? "The browser session was restored by repeating the recorded actions. Call next_item."
+                : "The browser is on the start address. Call next_item.")
+        };
         var idle = 0;
+        var restored = 0;
         while (_outcome is null)
         {
-            if (OverBudget(out var reason))
+            try
             {
-                _outcome = new PassOutcome("budget", reason);
-                break;
-            }
-            var turn = await model.NextAsync(system, Window(history), tools, 2048, cancellationToken);
-            history.Add(turn);
-            if (turn.Calls.Count == 0)
-            {
-                if (++idle >= 3)
+                if (OverBudget(out var reason))
                 {
-                    _outcome = new PassOutcome("agent-stopped", "The agent stopped calling tools: " + Json.Trim(turn.Text, 300));
+                    _outcome = new PassOutcome("budget", reason);
                     break;
                 }
-                history.Add(new UserText("Use the tools. Call next_item, or finish."));
-                continue;
+                var turn = await model.NextAsync(system, Window(history), tools, 2048, cancellationToken);
+                history.Add(turn);
+                if (turn.Calls.Count == 0)
+                {
+                    if (++idle >= 3)
+                    {
+                        _outcome = new PassOutcome("agent-stopped", "The agent stopped calling tools: " + Json.Trim(turn.Text, 300));
+                        break;
+                    }
+                    history.Add(new UserText("Use the tools. Call next_item, or finish."));
+                    continue;
+                }
+                idle = 0;
+                var results = new List<ToolResult>();
+                foreach (var call in turn.Calls)
+                {
+                    results.Add(_outcome is null
+                        ? await ExecuteAsync(call, cancellationToken)
+                        : new ToolResult(call.Id, "Not run: the pass has ended.", true));
+                }
+                history.Add(new ToolResults(results));
             }
-            idle = 0;
-            var results = new List<ToolResult>();
-            foreach (var call in turn.Calls)
+            catch (McpException ex) when (restored < 1 && SessionDied(ex))
             {
-                results.Add(_outcome is null
-                    ? await ExecuteAsync(call, cancellationToken)
-                    : new ToolResult(call.Id, "Not run: the pass has ended.", true));
+                restored++;
+                browser = await reopen(cancellationToken);
+                history.Add(new UserText("The browser session ended and was restored by repeating the recorded actions. Call next_item."));
             }
-            history.Add(new ToolResults(results));
         }
         return _outcome;
     }
@@ -112,6 +134,10 @@ sealed class AgentPass(
         {
             throw;
         }
+        catch (McpException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Tool {Tool} failed", call.Name);
@@ -122,7 +148,7 @@ sealed class AgentPass(
     private async Task<string> BrowserAsync(ToolCall call, CancellationToken cancellationToken)
     {
         var arguments = (JsonObject)call.Arguments.DeepClone();
-        var result = await session.CallAsync(call.Name, (JsonObject)arguments.DeepClone(), cancellationToken);
+        var result = await browser.CallAsync(call.Name, (JsonObject)arguments.DeepClone(), cancellationToken);
         if (result.IsError) return "Failed: " + Json.Trim(result.Text, 2000);
         if (!ActionTools.Contains(call.Name)) return Json.Trim(result.Text, call.Name == "browser_snapshot" ? 50000 : 4000);
 
@@ -259,7 +285,7 @@ sealed class AgentPass(
             await page.waitForTimeout(300);
             return { ok: true };
             """;
-        var result = await session.CallAsync("browser_run_code", new JsonObject { ["code"] = code }, cancellationToken);
+        var result = await browser.CallAsync("browser_run_code", new JsonObject { ["code"] = code }, cancellationToken);
         return result.IsError ? Json.Trim(result.Text, 200) : null;
     }
 
@@ -271,7 +297,7 @@ sealed class AgentPass(
     {
         var control = ledger.Current?.Find(key);
         if (control is null) return "That control is not on the page now. Open it and call next_item.";
-        var options = await session.CollectOptionsAsync(control.Frame, control.Selector, cancellationToken);
+        var options = await browser.CollectOptionsAsync(control.Frame, control.Selector, cancellationToken);
         ledger.Read.Add(key);
         if (options is null) return "The list could not be read. Call skip_item if it cannot be opened.";
         var record = ledger.Controls[key];
@@ -286,7 +312,7 @@ sealed class AgentPass(
 
     private async Task<string> SignInAsync(string reason, CancellationToken cancellationToken)
     {
-        if (session.LiveViewUrl is null)
+        if (browser.LiveViewUrl is null)
         {
             ledger.Problems.Add("Signing in was needed, but the remote browser offered no live view: " + reason);
             _outcome = new PassOutcome("blocked", "Signing in was needed and no live view was available.");
@@ -294,7 +320,7 @@ sealed class AgentPass(
         }
         await recorder.SetStatusAsync(RunStatus.WaitingForSignIn,
             "Sign in through the live view, return control, then press \"I have signed in\". The page asked: " + Json.Trim(reason, 200),
-            session.LiveViewUrl, cancellationToken);
+            browser.LiveViewUrl, cancellationToken);
         var signedIn = await recorder.WaitForSignInAsync(SignInTimeout, cancellationToken);
         if (!signedIn)
         {
@@ -354,19 +380,19 @@ sealed class AgentPass(
         var found = 0;
         try
         {
-            await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
+            await browser.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
             var seen = new HashSet<string>();
             var scrollY = 0;
             for (var viewport = 0; viewport < 6 && !OverBudget(out _); viewport++)
             {
-                var shot = await session.ScreenshotAsync(cancellationToken);
+                var shot = await browser.ScreenshotAsync(cancellationToken);
                 if (shot is null) break;
                 var leftThePage = false;
                 foreach (var target in (await TargetsAsync(shot, cancellationToken)).Take(3))
                 {
                     if (!seen.Add($"{scrollY}:{target.X / 8}:{target.Y / 8}")) continue;
                     var before = ledger.Controls.Count;
-                    var click = await session.CallAsync("browser_run_code", new JsonObject
+                    var click = await browser.CallAsync("browser_run_code", new JsonObject
                     {
                         ["code"] = $"await page.mouse.click({target.X}, {target.Y}); await page.waitForTimeout(400); return {{ ok: true }};"
                     }, cancellationToken);
@@ -375,18 +401,18 @@ sealed class AgentPass(
                     var added = ledger.Controls.Count - before;
                     if (added > 0) found += added;
                     else ledger.Problems.Add($"A screenshot showed a {target.Kind} at {target.X},{target.Y}, but the opened page still had no readable control.");
-                    await session.CallAsync("browser_run_code", new JsonObject { ["code"] = "await page.keyboard.press(\"Escape\"); await page.waitForTimeout(150); return { ok: true };" }, cancellationToken);
+                    await browser.CallAsync("browser_run_code", new JsonObject { ["code"] = "await page.keyboard.press(\"Escape\"); await page.waitForTimeout(150); return { ok: true };" }, cancellationToken);
                     if (!diff.UrlChanged) continue;
                     leftThePage = true;
                     break;
                 }
                 if (leftThePage) break;
-                var scroll = await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("by") }, cancellationToken);
+                var scroll = await browser.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("by") }, cancellationToken);
                 var moved = Json.FirstValue(scroll.Text, item => item?["moved"] is not null);
                 if (scroll.IsError || !Json.Bool(moved?["moved"])) break;
                 scrollY = Number(moved?["y"]);
             }
-            await session.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
+            await browser.CallAsync("browser_run_code", new JsonObject { ["code"] = ScrollCode("top") }, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -458,15 +484,15 @@ sealed class AgentPass(
         JsonNode raw;
         try
         {
-            raw = await session.InventoryAsync(3000, cancellationToken);
+            raw = await browser.InventoryAsync(3000, cancellationToken);
         }
         catch (McpException)
         {
-            raw = await session.InventoryAsync(300, cancellationToken);
+            raw = await browser.InventoryAsync(300, cancellationToken);
         }
         var state = Inventory.Parse(raw);
         var diff = ledger.Record(state, tool, arguments, controlKey, value, movesOn);
-        var screenshot = _fingerprints.Add(state.Fingerprint) ? await session.ScreenshotAsync(cancellationToken) : null;
+        var screenshot = _fingerprints.Add(state.Fingerprint) ? await browser.ScreenshotAsync(cancellationToken) : null;
         await recorder.OnStateAsync(state, screenshot, cancellationToken);
         await recorder.CountsAsync(ledger.Actions.Count, ledger.States.Count, cancellationToken);
         return diff;
@@ -493,6 +519,11 @@ sealed class AgentPass(
         var pressed = tool == "browser_click" && state.Buttons.Any(button => button.Selector == target);
         return (null, null, pressed || tool == "browser_click" && state.Controls.All(control => control.Selector != target));
     }
+
+    private static bool SessionDied(Exception exception) =>
+        exception.Message.Contains("session", StringComparison.OrdinalIgnoreCase)
+        || exception.Message.Contains("closed", StringComparison.OrdinalIgnoreCase)
+        || exception.Message.Contains("404", StringComparison.Ordinal);
 
     private bool OverBudget(out string reason)
     {
@@ -552,7 +583,7 @@ sealed class AgentPass(
     private List<ToolSpec> BuildTools()
     {
         var tools = new List<ToolSpec>();
-        foreach (var node in session.Tools)
+        foreach (var node in browser.Tools)
         {
             var name = Json.Str(node?["name"]);
             if (!BrowserTools.Contains(name)) continue;

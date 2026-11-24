@@ -1,0 +1,43 @@
+# Three containers for a deployment. Postgres, RabbitMQ, Foundry, Blob, Content Understanding,
+# Qdrant, Playwright, and Entra are not started here. Their addresses and keys come from ../.env.
+# DEVELOPMENT_AUTH is forced off. Sign-in is Entra, so ENTRA_TENANT_ID and ENTRA_API_CLIENT_ID must be set.
+# PUBLIC_API_URL must be the API address a browser can open.
+name: eisenberg
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    env_file:
+      - path: ../.env
+        required: true
+    environment:
+      DEVELOPMENT_AUTH: "false"
+      ASPNETCORE_URLS: http://+:5000
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    env_file:
+      - path: ../.env
+        required: true
+    environment:
+      ASPNETCORE_URLS: http://+:5001
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    environment:
+      API_BASE_URL: http://api:5000
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?Set PUBLIC_API_URL to the API address browsers can reach}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped

@@ -140,12 +140,4 @@ Kubernetes is the intended place for the three containers (`web`, `api`, `worker
 
 ## Open questions
 
-1. Foundry region.
-2. Where the containers run after testing.
-3. Whether retrieval stays on Qdrant or moves to Azure AI Search.
-4. Whether a user sees every file in an organization they belong to, or only the files they uploaded.
-5. What the user's settings contain. The mismatch path is decided: a failed check is reported to the admin, and the admin updates the settings.
-6. Which Foundry embeddings model.
-7. Which Content Understanding switch wins when the global, user, and import values disagree.
-8. Which model and which kind of Foundry agent perform the interpretation pass. The first test decides.
-9. The budget of an interpretation run.
+The questions that were open are decided in `docs/decisions.md`. Those decisions can change.

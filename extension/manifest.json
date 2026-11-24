@@ -13,5 +13,12 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["session.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

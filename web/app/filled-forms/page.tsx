@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 
-type Row = { id: string; createdAt: string; summary: string };
+type Row = { id: string; createdAt: string; summary: string; formAddress: string; recordLabel: string };
 
 export default function FilledFormsPage() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -14,19 +14,22 @@ export default function FilledFormsPage() {
   }, []);
 
   return (
-    <main>
+    <main className="wide">
       <h1>Filled forms</h1>
-      <p className="note">Information only. These records cannot be changed or deleted here.</p>
-      {error && <p>{error}</p>}
+      <p className="note">Information only. These records cannot be changed or deleted here. The values that were entered stay on the website that was filled.</p>
+      {error && <p className="failed">{error}</p>}
       <table>
-        <thead><tr><th>When</th><th>Summary</th></tr></thead>
+        <thead><tr><th>When</th><th>Form</th><th>Record</th><th>Summary</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
               <td>{new Date(row.createdAt).toLocaleString()}</td>
+              <td>{row.formAddress || "—"}</td>
+              <td>{row.recordLabel || "—"}</td>
               <td>{row.summary}</td>
             </tr>
           ))}
+          {rows.length === 0 && <tr><td colSpan={4}>Nothing has been filled yet.</td></tr>}
         </tbody>
       </table>
     </main>

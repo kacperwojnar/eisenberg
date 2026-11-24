@@ -5,19 +5,23 @@ import { api } from "../../../lib/api";
 
 type FileRow = {
   id: string;
-  organizationId: string;
+  organizationName: string;
   originalFileName: string;
+  status: string;
+  statusText: string;
   contentUnderstandingEnabled: boolean | null;
 };
 
 export default function ContentUnderstandingPage() {
   const [enabled, setEnabled] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [files, setFiles] = useState<FileRow[]>([]);
   const [error, setError] = useState("");
 
   async function load() {
-    const global = await api<{ enabled: boolean }>("/content-understanding");
+    const global = await api<{ enabled: boolean; connected: boolean }>("/content-understanding");
     setEnabled(global.enabled);
+    setConnected(global.connected);
     setFiles(await api<FileRow[]>("/admin/files"));
   }
 
@@ -39,20 +43,26 @@ export default function ContentUnderstandingPage() {
   }
 
   return (
-    <main>
-      <h1>Content Understanding</h1>
-      <p className="note">Per-user switch is on the Users page. Which switch wins when they disagree is not decided. The worker currently follows the global switch only.</p>
-      {error && <p>{error}</p>}
+    <main className="wide">
+      <h1>Reading</h1>
+      <p className="note">
+        Content Understanding is {connected ? "connected" : "not connected"}.
+        The most specific switch wins: this import, otherwise the user, otherwise the switch for everyone.
+        Files are not uploaded or deleted here.
+      </p>
+      {error && <p className="failed">{error}</p>}
       <label>
         <input type="checkbox" checked={enabled} onChange={(e) => setGlobal(e.target.checked)} />
         On for everyone
       </label>
       <table>
-        <thead><tr><th>Import</th><th>Switch</th></tr></thead>
+        <thead><tr><th>Organization</th><th>Import</th><th>Reading</th><th>Switch</th></tr></thead>
         <tbody>
           {files.map((file) => (
             <tr key={file.id}>
+              <td>{file.organizationName}</td>
               <td>{file.originalFileName}</td>
+              <td>{file.statusText || (file.status === "failed" ? "Reading failed." : file.status === "ready" ? "Read and indexed." : file.status === "processing" ? "Reading the document." : "Saved. No reading result yet.")}</td>
               <td>
                 <select
                   value={file.contentUnderstandingEnabled === null ? "" : String(file.contentUnderstandingEnabled)}
@@ -65,6 +75,7 @@ export default function ContentUnderstandingPage() {
               </td>
             </tr>
           ))}
+          {files.length === 0 && <tr><td colSpan={4}>No imports yet.</td></tr>}
         </tbody>
       </table>
     </main>

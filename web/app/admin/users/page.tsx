@@ -19,6 +19,11 @@ export default function UsersPage() {
   const [role, setRole] = useState("user");
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [addTo, setAddTo] = useState<Record<string, string>>({});
+
+  function nameOf(id: string) {
+    return organizations.find((organization) => organization.id === id)?.name || id;
+  }
 
   async function load() {
     setOrganizations(await api<Organization[]>("/organizations"));
@@ -41,6 +46,13 @@ export default function UsersPage() {
     });
     setEmail("");
     setSelected([]);
+    await load();
+  }
+
+  async function addOrganization(id: string) {
+    const organizationId = addTo[id];
+    if (!organizationId) return;
+    await api(`/users/${id}/organizations`, { method: "POST", body: JSON.stringify({ organizationId }) });
     await load();
   }
 
@@ -71,12 +83,24 @@ export default function UsersPage() {
         <button type="submit">Create</button>
       </form>
       <table>
-        <thead><tr><th>Email</th><th>Role</th><th>Content Understanding</th></tr></thead>
+        <thead><tr><th>Email</th><th>Role</th><th>Organizations</th><th>Content Understanding</th></tr></thead>
         <tbody>
           {users.map((user) => (
             <tr key={user.id}>
               <td>{user.email}</td>
               <td>{user.role}</td>
+              <td>
+                {user.organizationIds.map(nameOf).join(", ") || "none"}
+                <form className="row" onSubmit={(event) => { event.preventDefault(); addOrganization(user.id); }}>
+                  <select value={addTo[user.id] || ""} onChange={(e) => setAddTo((current) => ({ ...current, [user.id]: e.target.value }))}>
+                    <option value="">Add to</option>
+                    {organizations.filter((organization) => !user.organizationIds.includes(organization.id)).map((organization) => (
+                      <option key={organization.id} value={organization.id}>{organization.name}</option>
+                    ))}
+                  </select>
+                  <button type="submit">Add</button>
+                </form>
+              </td>
               <td>
                 <select
                   value={user.contentUnderstandingEnabled === null ? "" : String(user.contentUnderstandingEnabled)}

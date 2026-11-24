@@ -4,19 +4,23 @@
     <meta charset="utf-8" />
     <title>eisenberg</title>
     <style>
-      body { font-family: Georgia, serif; margin: 0; }
+      body { font-family: Georgia, serif; margin: 0; color: #1c1c1c; background: #f6f6f4; }
       main { display: flex; flex-direction: column; height: 100vh; }
+      header { padding: 0.75rem; border-bottom: 1px solid #ddd; background: #fff; }
+      header h1 { font-size: 1rem; margin: 0; }
       #records { flex: 1; overflow: auto; padding: 0.75rem; }
-      button.record { display: block; width: 100%; text-align: left; margin: 0 0 0.4rem; font: inherit; }
-      button.record[aria-pressed="true"] { outline: 2px solid #333; }
+      button.record { display: block; width: 100%; text-align: left; margin: 0 0 0.4rem; font: inherit; background: #fff; border: 1px solid #ddd; padding: 0.45rem; }
+      button.record[aria-pressed="true"] { border-color: #1c1c1c; }
       .note { color: #555; font-size: 0.85rem; padding: 0.75rem 0.75rem 0; }
       #status { white-space: pre-wrap; }
-      footer { padding: 0.75rem; border-top: 1px solid #ddd; }
+      footer { padding: 0.75rem; border-top: 1px solid #ddd; background: #fff; }
     </style>
   </head>
   <body>
     <main>
-      <p class="note">Choose a record. It is entered into the open tab.</p>
+      <header><h1>Fill the open form</h1></header>
+      <p class="note" id="account">Open the website. This extension uses that account.</p>
+      <p class="note">Choose a record built from the documents. It is written into the tab you have open, using the published form.</p>
       <div id="records"></div>
       <p class="note" id="status"></p>
       <footer>

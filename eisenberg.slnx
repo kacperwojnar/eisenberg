@@ -2,4 +2,5 @@
   <Project Path="data/Eisenberg.Data.csproj" />
   <Project Path="api/Eisenberg.Api.csproj" />
   <Project Path="worker/Eisenberg.Worker.csproj" />
+  <Project Path="tests/Eisenberg.Tests.csproj" />
 </Solution>

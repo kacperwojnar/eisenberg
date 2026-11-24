@@ -10,7 +10,8 @@ type FormRow = {
   description: string;
   createdAt: string;
   publishedModelNumber: number | null;
-  lastRun: { id: string; status: string; statusText: string; createdAt: string } | null;
+  organizationNames: string[];
+  lastRun: { id: string; status: string; statusText: string; createdAt: string; liveViewUrl: string | null } | null;
 };
 
 export default function FormsPage() {
@@ -42,7 +43,7 @@ export default function FormsPage() {
   }
 
   return (
-    <main>
+    <main className="wide">
       <h1>Forms</h1>
       {error && <p>{error}</p>}
       <form className="stack" onSubmit={create}>
@@ -59,12 +60,18 @@ export default function FormsPage() {
         </div>
       </form>
       <table>
-        <thead><tr><th>Address</th><th>Last run</th><th>Published</th></tr></thead>
+        <thead><tr><th>Address</th><th>Organizations</th><th>Last run</th><th>Live view</th><th>Published</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
               <td><Link href={`/admin/forms/${row.id}`}>{row.address}</Link></td>
+              <td>{(row.organizationNames ?? []).join(", ") || "none"}</td>
               <td>{row.lastRun ? `${row.lastRun.status}: ${row.lastRun.statusText}` : "none"}</td>
+              <td>
+                {row.lastRun?.status === "waiting-for-sign-in" && row.lastRun.liveViewUrl
+                  ? <a href={row.lastRun.liveViewUrl} target="_blank" rel="noreferrer">Open the live view</a>
+                  : "Not waiting"}
+              </td>
               <td>{row.publishedModelNumber ? `model ${row.publishedModelNumber}` : "no"}</td>
             </tr>
           ))}

@@ -4,7 +4,7 @@ namespace Eisenberg.Worker.Interpretation;
 
 static class Report
 {
-    public static JsonObject Build(Ledger ledger, PassOutcome? outcome, BuiltModel? built, IChatModel? agent, IChatModel? builder, TimeSpan duration, string? error)
+    public static JsonObject Build(Ledger ledger, PassOutcome? outcome, BuiltModel? built, IChatModel? agent, IChatModel? builder, TimeSpan duration, string? error, JsonObject? pathCheck = null, JsonObject? fillCheck = null)
     {
         var checks = new JsonArray
         {
@@ -19,10 +19,12 @@ static class Report
             Check("The pass reached the last step before the final submit",
                 outcome?.StoppedBecause == "final-step-reached" ? "passed" : "failed",
                 [Stopped(outcome, error)]),
-            Check("Paths generated from the model were repeated and matched", "not-run",
-                ["Not implemented in this version of the test tool."]),
-            Check("The form was filled once with a generated instance and read back", "not-run",
-                ["Not implemented in this version of the test tool."])
+            Check("Paths generated from the model were repeated and matched",
+                pathCheck?["status"] is JsonValue pathStatus ? pathStatus.ToString().Trim('"') : "not-run",
+                pathCheck?["details"] is JsonArray pathDetails ? pathDetails.Select(Json.Str) : ["The check did not run."]),
+            Check("The form was filled once with a generated instance and read back",
+                fillCheck?["status"] is JsonValue fillStatus ? fillStatus.ToString().Trim('"') : "not-run",
+                fillCheck?["details"] is JsonArray fillDetails ? fillDetails.Select(Json.Str) : ["The check did not run."])
         };
 
         return new JsonObject

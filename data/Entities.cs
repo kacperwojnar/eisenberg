@@ -34,7 +34,9 @@ public sealed class StoredFile
     public string StorageLocation { get; set; } = "";
     public DateTimeOffset UploadedAt { get; set; }
     public string Status { get; set; } = "stored";
+    public string StatusText { get; set; } = "";
     public bool? ContentUnderstandingEnabled { get; set; }
+    public string? Reading { get; set; }
     public Organization Organization { get; set; } = null!;
 }
 
@@ -45,6 +47,20 @@ public sealed class FilledFormInfo
     public Guid UserId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string Summary { get; set; } = "";
+    public string FormAddress { get; set; } = "";
+    public string RecordLabel { get; set; } = "";
+    public Guid? InstanceId { get; set; }
+}
+
+public sealed class FormChangeReport
+{
+    public Guid Id { get; set; }
+    public Guid OrganizationId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid FormId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public string Text { get; set; } = "";
+    public DateTimeOffset? HandledAt { get; set; }
 }
 
 public sealed class SettingsMismatch
@@ -54,6 +70,7 @@ public sealed class SettingsMismatch
     public Guid UserId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string Text { get; set; } = "";
+    public DateTimeOffset? HandledAt { get; set; }
 }
 
 public sealed class GlobalContentUnderstanding
@@ -149,4 +166,19 @@ public sealed class RunArtifact
     public string StorageLocation { get; set; } = "";
     public string ContentType { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class FormInstance
+{
+    public Guid Id { get; set; }
+    public Guid OrganizationId { get; set; }
+    public Guid ModelId { get; set; }
+    public string TypeName { get; set; } = "";
+    public string? SubclassName { get; set; }
+    public string Label { get; set; } = "";
+    public string ValuesJson { get; set; } = "{}";
+    public string SourcesJson { get; set; } = "{}";
+    public bool Generated { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }

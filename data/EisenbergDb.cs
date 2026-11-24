@@ -11,6 +11,7 @@ public sealed class EisenbergDb(DbContextOptions<EisenbergDb> options) : DbConte
     public DbSet<StoredFile> Files => Set<StoredFile>();
     public DbSet<FilledFormInfo> FilledForms => Set<FilledFormInfo>();
     public DbSet<SettingsMismatch> SettingsMismatches => Set<SettingsMismatch>();
+    public DbSet<FormChangeReport> FormChangeReports => Set<FormChangeReport>();
     public DbSet<GlobalContentUnderstanding> GlobalContentUnderstanding => Set<GlobalContentUnderstanding>();
     public DbSet<FormDefinition> Forms => Set<FormDefinition>();
     public DbSet<InterpretationRun> InterpretationRuns => Set<InterpretationRun>();
@@ -18,6 +19,7 @@ public sealed class EisenbergDb(DbContextOptions<EisenbergDb> options) : DbConte
     public DbSet<ChoiceList> ChoiceLists => Set<ChoiceList>();
     public DbSet<FormPublication> FormPublications => Set<FormPublication>();
     public DbSet<RunArtifact> RunArtifacts => Set<RunArtifact>();
+    public DbSet<FormInstance> Instances => Set<FormInstance>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -55,6 +57,10 @@ public sealed class EisenbergDb(DbContextOptions<EisenbergDb> options) : DbConte
         modelBuilder.Entity<FormPublication>().HasOne<Organization>().WithMany().HasForeignKey(p => p.OrganizationId);
         modelBuilder.Entity<RunArtifact>().HasIndex(a => new { a.RunId, a.Sequence });
         modelBuilder.Entity<RunArtifact>().HasOne<InterpretationRun>().WithMany().HasForeignKey(a => a.RunId);
+        modelBuilder.Entity<FormInstance>().Property(i => i.ValuesJson).HasColumnType("jsonb");
+        modelBuilder.Entity<FormInstance>().Property(i => i.SourcesJson).HasColumnType("jsonb");
+        modelBuilder.Entity<FormInstance>().HasIndex(i => new { i.OrganizationId, i.ModelId });
+        modelBuilder.Entity<FormChangeReport>().HasIndex(r => r.HandledAt);
     }
 }
 
@@ -69,6 +75,14 @@ public static class Schema
         var script = db.Database.GenerateCreateScript();
         script = Regex.Replace(script, @"\bCREATE TABLE\b", "CREATE TABLE IF NOT EXISTS");
         script = Regex.Replace(script, @"\bCREATE (UNIQUE )?INDEX\b", "CREATE ${1}INDEX IF NOT EXISTS");
+        script += """
+            ALTER TABLE "Files" ADD COLUMN IF NOT EXISTS "StatusText" text NOT NULL DEFAULT '';
+            ALTER TABLE "Instances" ADD COLUMN IF NOT EXISTS "SourcesJson" jsonb NOT NULL DEFAULT '{}';
+            ALTER TABLE "FilledForms" ADD COLUMN IF NOT EXISTS "FormAddress" text NOT NULL DEFAULT '';
+            ALTER TABLE "FilledForms" ADD COLUMN IF NOT EXISTS "RecordLabel" text NOT NULL DEFAULT '';
+            ALTER TABLE "FilledForms" ADD COLUMN IF NOT EXISTS "InstanceId" uuid NULL;
+            ALTER TABLE "SettingsMismatches" ADD COLUMN IF NOT EXISTS "HandledAt" timestamp with time zone NULL;
+            """;
         await db.Database.ExecuteSqlRawAsync(script, cancellationToken);
     }
 }
