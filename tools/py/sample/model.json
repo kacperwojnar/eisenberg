@@ -1,0 +1,12 @@
+{
+  "types": [
+    {
+      "name": "Driver",
+      "properties": [
+        { "name": "name", "kind": "text", "required": true, "controls": [{ "pageText": "Name", "selector": "#name" }] },
+        { "name": "start", "kind": "date", "required": true, "controls": [{ "pageText": "Start", "selector": "#start" }] },
+        { "name": "fuel", "kind": "choice", "required": true, "choiceListId": "fuel", "controls": [{ "pageText": "Fuel", "selector": "#fuel" }] }
+      ]
+    }
+  ]
+}

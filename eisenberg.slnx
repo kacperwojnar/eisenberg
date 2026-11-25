@@ -3,4 +3,5 @@
   <Project Path="api/Eisenberg.Api.csproj" />
   <Project Path="worker/Eisenberg.Worker.csproj" />
   <Project Path="tests/Eisenberg.Tests.csproj" />
+  <Project Path="tools/Eisenberg.Pack/Eisenberg.Pack.csproj" />
 </Solution>

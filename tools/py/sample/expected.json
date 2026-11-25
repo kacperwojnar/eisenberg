@@ -1,0 +1,11 @@
+[
+  {
+    "type": "Driver",
+    "label": "Ada Lovelace",
+    "values": { "name": "Ada Lovelace", "start": "1990-01-02", "fuel": "petrol" },
+    "sources": {
+      "name": { "fileName": "policy.txt", "page": 1 },
+      "fuel": { "fileName": "policy.txt", "page": 1 }
+    }
+  }
+]

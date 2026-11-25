@@ -266,6 +266,22 @@ docker compose -f infra/docker-compose.prod.yml up
 
 The same three workloads are described for Kubernetes in [infra/k8s/eisenberg.yaml](infra/k8s/eisenberg.yaml).
 
+## Python tools
+
+Three scripts in `tools/py` read what the system already stored. They are not a fourth service, and they do not sit on the path from an upload to a filled page.
+
+```text
+cd tools/py
+pip install -r requirements.txt
+python -m eisenberg_tools.places sample/reading.json --document page.pdf --out places
+python -m eisenberg_tools.score sample
+python -m eisenberg_tools.export_training sample --out training.jsonl
+```
+
+Run these from `tools/py`. That directory is the module root.
+
+`places` draws the polygons from a reading onto the document. Pass `--document file.pdf` or `--document page.png`, and each page is written with the places on it. Without a document it draws the places on a blank page. `score` asks `tools/Eisenberg.Pack` to build the records. That program calls the same `LocalRecords` code the worker uses when Foundry is off, then the script compares the result with `expected.json`. `--foundry` calls Haiku instead, using `FOUNDRY_ENDPOINT` and `FOUNDRY_API_KEY`. `export_training` writes one JSONL line from `corrected.json`, in the shape Foundry supervised training expects. The training itself stays in Foundry.
+
 ## The longer documents
 
 [docs/product-plan.md](docs/product-plan.md) is the product and the technical plan. [docs/form-model-specification.md](docs/form-model-specification.md) specifies the model, the interpretation, the records, and the extension. [docs/decisions.md](docs/decisions.md) records the choices that were made where the plan left a question open. Any of those choices can change.
